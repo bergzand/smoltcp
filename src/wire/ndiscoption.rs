@@ -20,7 +20,11 @@ enum_with_unknown! {
         /// Redirected Header
         RedirectedHeader    = 0x4,
         /// MTU
-        Mtu                 = 0x5
+        Mtu                 = 0x5,
+        // Recursive DNS server
+        RecursiveDnsServer  = 25,
+        // DNS Search List
+        DnsSearchList       = 31,
     }
 }
 
@@ -32,6 +36,8 @@ impl fmt::Display for Type {
             Type::PrefixInformation => write!(f, "prefix information"),
             Type::RedirectedHeader => write!(f, "redirected header"),
             Type::Mtu => write!(f, "mtu"),
+            Type::RecursiveDnsServer => write!(f, "recursive dns server"),
+            Type::DnsSearchList => write!(f, "dns search list"),
             Type::Unknown(id) => write!(f, "{id}"),
         }
     }
@@ -140,6 +146,31 @@ mod field {
 
     //  MTU
     pub const MTU: Field = 4..8;
+
+    // Recursive DNS Server option fields
+    //  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    //  |     Type      |     Length    |           Reserved            |
+    //  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    //  |                           Lifetime                            |
+    //  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    //  |                                                               |
+    //  :            Addresses of IPv6 Recursive DNS Servers            :
+    //  |                                                               |
+    //  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+
+    //
+    pub const DNS_SERVERS: usize = 8;
+
+    // DNS Search List
+    //  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    //  |     Type      |     Length    |           Reserved            |
+    //  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    //  |                           Lifetime                            |
+    //  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    //  |                                                               |
+    //  :                Domain Names of DNS Search List                :
+    //  |                                                               |
+    //  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 }
 
 /// Core getter methods relevant to any type of NDISC option.
@@ -186,6 +217,8 @@ impl<T: AsRef<[u8]>> NdiscOption<T> {
                     Type::SourceLinkLayerAddr | Type::TargetLinkLayerAddr | Type::Mtu => Ok(()),
                     Type::PrefixInformation if data_range.end >= field::PREFIX.end => Ok(()),
                     Type::RedirectedHeader if data_range.end >= field::REDIR_MIN_SZ => Ok(()),
+                    Type::RecursiveDnsServer if data_range.end > field::VALID_LT.end => Ok(()),
+                    Type::DnsSearchList if data_range.end >= field::VALID_LT.end => Ok(()),
                     Type::Unknown(_) => Ok(()),
                     _ => Err(Error),
                 }
@@ -210,8 +243,7 @@ impl<T: AsRef<[u8]>> NdiscOption<T> {
     pub fn data_len(&self) -> u8 {
         let data = self.buffer.as_ref();
         data[field::LENGTH]
-    }
-}
+    }}
 
 /// Getter methods only relevant for Source/Target Link-layer Address options.
 impl<T: AsRef<[u8]>> NdiscOption<T> {
@@ -267,6 +299,42 @@ impl<T: AsRef<[u8]>> NdiscOption<T> {
     pub fn prefix(&self) -> Ipv6Address {
         let data = self.buffer.as_ref();
         Ipv6Address::from_bytes(&data[field::PREFIX])
+    }
+}
+
+/// Getter methods only relevant for the Recursive DNS Server option.
+impl<T: AsRef<[u8]>> NdiscOption<T> {
+
+    /// Return the DNS server lifetime.
+    #[inline]
+    pub fn dns_server_lifetime(&self) -> Duration {
+        self.valid_lifetime()
+    }
+
+    #[inline]
+    pub fn num_dns_servers(&self) -> u8 {
+        (self.data_len() - 1) / 2
+    }
+
+    pub fn dns_server(&self, n: usize) -> Result<Ipv6Address> {
+        if self.num_dns_servers() as usize > n {
+            let data = self.buffer.as_ref();
+            let start = field::DNS_SERVERS + 16 * n;
+            Ok(Ipv6Address::from_bytes(&data[start..start + 16]))
+        }
+        else {
+            Err(Error)
+        }
+    }
+}
+
+/// Getter methods only relevant for the DNS Search List option.
+impl<T: AsRef<[u8]>> NdiscOption<T> {
+
+    /// Return the DNS search list lifetime.
+    #[inline]
+    pub fn dns_search_lifetime(&self) -> Duration {
+        self.valid_lifetime()
     }
 }
 
@@ -370,6 +438,24 @@ impl<T: AsRef<[u8]> + AsMut<[u8]>> NdiscOption<T> {
     }
 }
 
+/// Setter methods only relevant for the Recursive DNS Server header option.
+impl<T: AsRef<[u8]> + AsMut<[u8]>> NdiscOption<T> {
+    #[inline]
+    pub fn set_dns_servers(&mut self, servers: &[u8]) {
+        let data = self.buffer.as_mut();
+        data[field::DNS_SERVERS..field::DNS_SERVERS + servers.len()].copy_from_slice(&servers);
+    }
+}
+
+/// Setter methods only relevant for the Recursive DNS Server header option.
+impl<T: AsRef<[u8]> + AsMut<[u8]>> NdiscOption<T> {
+    #[inline]
+    pub fn set_search_domains(&mut self, domains: &[u8]) {
+        let data = self.buffer.as_mut();
+        data[field::DNS_SERVERS..field::DNS_SERVERS + domains.len()].copy_from_slice(&domains);
+    }
+}
+
 impl<'a, T: AsRef<[u8]> + AsMut<[u8]> + ?Sized> NdiscOption<&'a mut T> {
     /// Return a mutable pointer to the option data.
     #[inline]
@@ -409,6 +495,20 @@ pub struct RedirectedHeader<'a> {
     pub data: &'a [u8],
 }
 
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct RecursiveDnsServer<'a> {
+    pub lifetime: Duration,
+    pub servers: &'a [u8],
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct DnsSearchList<'a> {
+    pub lifetime: Duration,
+    pub domains: &'a [u8],
+}
+
 /// A high-level representation of an NDISC Option.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -418,6 +518,8 @@ pub enum Repr<'a> {
     PrefixInformation(PrefixInformation),
     RedirectedHeader(RedirectedHeader<'a>),
     Mtu(u32),
+    RecursiveDnsServer(RecursiveDnsServer<'a>),
+    DnsSearchList(DnsSearchList<'a>),
     Unknown {
         type_: u8,
         length: u8,
@@ -486,6 +588,20 @@ impl<'a> Repr<'a> {
                     Err(Error)
                 }
             }
+            Type::RecursiveDnsServer => {
+                if opt.data_len() >= 3 {
+                    let data = opt.buffer.as_ref();
+                    Ok(Repr::RecursiveDnsServer(RecursiveDnsServer {
+                        lifetime: opt.dns_server_lifetime(),
+                        servers: &data[field::DNS_SERVERS..data.len()],
+                    }))
+                } else {
+                    Err(Error)
+                }
+            }
+            Type::DnsSearchList => {
+                Err(Error)
+            }
             Type::Unknown(id) => {
                 // A length of 0 is invalid.
                 if opt.data_len() != 0 {
@@ -512,6 +628,12 @@ impl<'a> Repr<'a> {
             &Repr::PrefixInformation(_) => field::PREFIX.end,
             &Repr::RedirectedHeader(RedirectedHeader { header, data }) => {
                 (8 + header.buffer_len() + data.len() + 7) / 8 * 8
+            }
+            &Repr::RecursiveDnsServer(rdnss) => {
+                field::DNS_SERVERS + rdnss.servers.len()
+            }
+            &Repr::DnsSearchList(dnssl) => {
+                field::VALID_LT.end + dnssl.domains.len()
             }
             &Repr::Mtu(_) => field::MTU.end,
             &Repr::Unknown { length, .. } => field::DATA(length).end,
@@ -568,6 +690,16 @@ impl<'a> Repr<'a> {
                 opt.set_data_len(1);
                 opt.set_mtu(mtu);
             }
+            Repr::RecursiveDnsServer(RecursiveDnsServer {lifetime, servers}) => {
+                opt.set_option_type(Type::RecursiveDnsServer);
+                opt.set_valid_lifetime(lifetime);
+                opt.set_dns_servers(servers);
+            }
+            Repr::DnsSearchList(DnsSearchList {lifetime, domains}) => {
+                opt.set_option_type(Type::DnsSearchList);
+                opt.set_valid_lifetime(lifetime);
+                opt.set_search_domains(domains);
+            }
             Repr::Unknown {
                 type_: id,
                 length,
@@ -601,6 +733,12 @@ impl<'a> fmt::Display for Repr<'a> {
             }
             Repr::Mtu(mtu) => {
                 write!(f, "MTU mtu={mtu}")
+            }
+            Repr::RecursiveDnsServer(RecursiveDnsServer{lifetime, ..}) => {
+                write!(f, "RDNSS lt={lifetime}")
+            }
+            Repr::DnsSearchList(DnsSearchList{lifetime, ..}) => {
+                write!(f, "DNSSL lt={lifetime}")
             }
             Repr::Unknown {
                 type_: id, length, ..
