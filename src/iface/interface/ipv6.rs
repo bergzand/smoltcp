@@ -502,6 +502,11 @@ impl InterfaceInner {
                     None
                 }
             }
+            NdiscRepr::RouterAdvert { flags, router_lifetime, reachable_time, prefix_info, .. }
+                if self.slaac && ip_repr.dst_addr == IPV6_LINK_LOCAL_ALL_NODES =>
+            {
+                None
+            }
             _ => None,
         }
     }

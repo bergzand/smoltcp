@@ -142,6 +142,8 @@ pub struct InterfaceInner {
     tag: u16,
     ip_addrs: Vec<IpCidr, IFACE_MAX_ADDR_COUNT>,
     any_ip: bool,
+    #[cfg(feature = "proto-ipv6")]
+    slaac: bool,
     routes: Routes,
     #[cfg(feature = "multicast")]
     multicast: multicast::State,
@@ -169,6 +171,10 @@ pub struct Config {
     /// **NOTE**: we use the same PAN ID for destination and source.
     #[cfg(feature = "medium-ieee802154")]
     pub pan_id: Option<Ieee802154Pan>,
+
+    /// Enable stateless address autoconfiguration on the interface.
+    #[cfg(feature = "proto-ipv6")]
+    pub slaac: bool,
 }
 
 impl Config {
@@ -178,6 +184,7 @@ impl Config {
             hardware_addr,
             #[cfg(feature = "medium-ieee802154")]
             pan_id: None,
+            slaac: true,
         }
     }
 }
@@ -262,6 +269,8 @@ impl Interface {
                 ipv4_id,
                 #[cfg(feature = "proto-sixlowpan")]
                 sixlowpan_address_context: Vec::new(),
+                #[cfg(feature = "proto-ipv6")]
+                slaac: config.slaac,
                 rand,
             },
         }
