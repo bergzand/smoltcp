@@ -11,6 +11,7 @@ mod neighbor;
 mod route;
 #[cfg(feature = "proto-rpl")]
 mod rpl;
+mod slaac;
 mod socket_meta;
 mod socket_set;
 
