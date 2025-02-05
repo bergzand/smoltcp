@@ -433,6 +433,17 @@ impl Interface {
         self.inner.any_ip
     }
 
+    pub fn set_slaac(&mut self, enable: bool) {
+        if enable {
+            self.inner.slaac.reset();
+        }
+        else {
+            self.inner.slaac.expire_all();
+            self.sync_slaac_state(Instant::from_secs(1));
+        }
+        self.inner.slaac_enabled = enable;
+    }
+
     /// Get the packet reassembly timeout.
     #[cfg(feature = "_proto-fragmentation")]
     pub fn reassembly_timeout(&self) -> Duration {

@@ -214,6 +214,26 @@ impl Slaac {
         self.routes.iter().any(|r| !r.is_valid(now))
     }
 
+    pub(crate) fn reset(&mut self) {
+        self.phase = Phase::Start;
+        self.sync_required = false;
+        self.retry_rs_at = Instant::ZERO;
+        self.num_solicitations = MAX_RTR_SOLICITATIONS;
+    }
+
+    /// Force expire all prefix and route information
+    ///
+    /// Can be used to reset the slaac RA state
+    pub(crate) fn expire_all(&mut self) {
+        for info in self.prefix.values_mut() {
+            info.valid_until = Instant::ZERO;
+            info.preferred_until = Instant::ZERO;
+        }
+        for route in self.routes.iter_mut() {
+            route.valid_until = Instant::ZERO;
+        }
+    }
+
     /// Get whether a route and prefix information must be synchronized with the interface.
     pub(crate) fn sync_required(&self, now: Instant) -> bool {
         self.has_ra_update()
